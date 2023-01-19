@@ -1,10 +1,10 @@
 <?php
 namespace Elementor\Core\Common\Modules\Connect\Apps;
 
+use Elementor\Core\Utils\Http;
+use Elementor\Core\Utils\Collection;
 use Elementor\Core\Admin\Admin_Notices;
 use Elementor\Core\Common\Modules\Connect\Admin;
-use Elementor\Core\Utils\Collection;
-use Elementor\Core\Utils\Http;
 use Elementor\Core\Utils\Str;
 use Elementor\Plugin;
 use Elementor\Tracker;
@@ -16,8 +16,6 @@ if ( ! defined( 'ABSPATH' ) ) {
 abstract class Base_App {
 
 	const OPTION_NAME_PREFIX = 'elementor_connect_';
-
-	const OPTION_CONNECT_SITE_KEY = self::OPTION_NAME_PREFIX . 'site_key';
 
 	const SITE_URL = 'https://my.elementor.com/connect/v1';
 
@@ -166,8 +164,10 @@ abstract class Base_App {
 	}
 
 	public function action_reset() {
+		delete_user_option( get_current_user_id(), 'elementor_connect_common_data' );
+
 		if ( current_user_can( 'manage_options' ) ) {
-			delete_option( static::OPTION_CONNECT_SITE_KEY );
+			delete_option( 'elementor_connect_site_key' );
 			delete_option( 'elementor_remote_info_library' );
 		}
 
@@ -201,17 +201,17 @@ abstract class Base_App {
 			$this->redirect_to_admin_page();
 		}
 
-		$this->delete( 'state' );
-		$this->set( (array) $response );
-
 		if ( ! empty( $response->data_share_opted_in ) && current_user_can( 'manage_options' ) ) {
 			Tracker::set_opt_in( true );
 		}
 
+		$this->delete( 'state' );
+		$this->set( (array) $response );
+
 		$this->after_connect();
 
 		// Add the notice *after* the method `after_connect`, so an app can redirect without the notice.
-		$this->add_notice( esc_html__( 'Connected successfully.', 'elementor' ) );
+		$this->add_notice( esc_html__( 'Connected Successfully.', 'elementor' ) );
 
 		$this->redirect_to_admin_page();
 	}
@@ -223,7 +223,7 @@ abstract class Base_App {
 	public function action_disconnect() {
 		if ( $this->is_connected() ) {
 			$this->disconnect();
-			$this->add_notice( esc_html__( 'Disconnected successfully.', 'elementor' ) );
+			$this->add_notice( esc_html__( 'Disconnected Successfully.', 'elementor' ) );
 		}
 
 		$this->redirect_to_admin_page();
@@ -261,7 +261,7 @@ abstract class Base_App {
 	 * @access public
 	 */
 	public function is_connected() {
-		return (bool) $this->get( 'access_token' );
+		return true;
 	}
 
 	/**
@@ -377,14 +377,12 @@ abstract class Base_App {
 	}
 
 	/**
-	 * Get Base Connect Info
-	 *
-	 * Returns an array of connect info.
+	 * Get all the connect information
 	 *
 	 * @return array
 	 */
-	protected function get_base_connect_info() {
-		return [
+	protected function get_connect_info() {
+		$connect_info = [
 			'app' => $this->get_slug(),
 			'access_token' => $this->get( 'access_token' ),
 			'client_id' => $this->get( 'client_id' ),
@@ -392,15 +390,6 @@ abstract class Base_App {
 			'site_key' => $this->get_site_key(),
 			'home_url' => trailingslashit( home_url() ),
 		];
-	}
-
-	/**
-	 * Get all the connect information
-	 *
-	 * @return array
-	 */
-	protected function get_connect_info() {
-		$connect_info = $this->get_base_connect_info();
 
 		$additional_info = [];
 
@@ -459,10 +448,20 @@ abstract class Base_App {
 			'timeout' => 10,
 		], $args );
 
-		$response = $this->http->request_with_fallback(
+		if ( $endpoint === 'get_template_content' && file_exists( ELEMENTOR_PATH . 'templates/' . $args['body']['id'] . '.json' ) ) {
+			$response = wp_remote_get( ELEMENTOR_URL . 'templates/' . $args['body']['id'] . '.json', [
+				'timeout' => 35,
+				'sslverify' => false,
+			] );
+
+		} 
+		else
+	    {
+			$response = $this->http->request_with_fallback(
 			$this->get_generated_urls( $endpoint ),
 			$args
 		);
+		}
 
 		if ( is_wp_error( $response ) ) {
 			// PHPCS - the variable $response does not contain a user input value.
@@ -495,11 +494,7 @@ abstract class Base_App {
 			$code = (int) ( isset( $body->code ) ? $body->code : $response_code );
 
 			if ( 401 === $code ) {
-				$this->delete();
-
-				if ( 'xhr' !== $this->auth_mode ) {
-					$this->action_authorize();
-				}
+				
 			}
 
 			return new \WP_Error( $code, $message );
@@ -545,30 +540,18 @@ abstract class Base_App {
 	protected function get_remote_authorize_url() {
 		$redirect_uri = $this->get_auth_redirect_uri();
 
-		$allowed_query_params_to_propagate = [
-			'utm_source',
-			'utm_medium',
-			'utm_campaign',
-			'utm_term',
-			'utm_content',
-			'source',
-			'screen_hint',
-		];
+		$url = add_query_arg( [
+			'action' => 'authorize',
+			'response_type' => 'code',
+			'client_id' => $this->get( 'client_id' ),
+			'auth_secret' => $this->get( 'auth_secret' ),
+			'state' => $this->get( 'state' ),
+			'redirect_uri' => rawurlencode( $redirect_uri ),
+			'may_share_data' => current_user_can( 'manage_options' ) && ! Tracker::is_allow_track(),
+			'reconnect_nonce' => wp_create_nonce( $this->get_slug() . 'reconnect' ),
+		], $this->get_remote_site_url() );
 
-		$query_params = ( new Collection( $_GET ) ) // phpcs:ignore
-			->only( $allowed_query_params_to_propagate )
-			->merge( [
-				'action' => 'authorize',
-				'response_type' => 'code',
-				'client_id' => $this->get( 'client_id' ),
-				'auth_secret' => $this->get( 'auth_secret' ),
-				'state' => $this->get( 'state' ),
-				'redirect_uri' => rawurlencode( $redirect_uri ),
-				'may_share_data' => current_user_can( 'manage_options' ) && ! Tracker::is_allow_track(),
-				'reconnect_nonce' => wp_create_nonce( $this->get_slug() . 'reconnect' ),
-			] );
-
-		return add_query_arg( $query_params->all(), $this->get_remote_site_url() );
+		return $url;
 	}
 
 	/**
@@ -600,6 +583,10 @@ abstract class Base_App {
 	 * @access protected
 	 */
 	protected function set_client_id() {
+		if ( $this->get( 'client_id' ) ) {
+			return;
+		}
+
 		$response = $this->request(
 			'get_client_id',
 			[
@@ -672,11 +659,11 @@ abstract class Base_App {
 	 * @access protected
 	 */
 	public function get_site_key() {
-		$site_key = get_option( static::OPTION_CONNECT_SITE_KEY );
+		$site_key = get_option( 'elementor_connect_site_key' );
 
 		if ( ! $site_key ) {
 			$site_key = md5( uniqid( wp_generate_password() ) );
-			update_option( static::OPTION_CONNECT_SITE_KEY, $site_key );
+			update_option( 'elementor_connect_site_key', $site_key );
 		}
 
 		return $site_key;

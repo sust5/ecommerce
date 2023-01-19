@@ -1,16 +1,12 @@
 <?php
 namespace Elementor\TemplateLibrary;
 
-use Elementor\Core\Admin\Menu\Admin_Menu_Manager;
 use Elementor\Core\Base\Document;
 use Elementor\Core\Editor\Editor;
-use Elementor\Core\Utils\Collection;
+use Elementor\Core\Files\File_Types\Zip;
 use Elementor\DB;
 use Elementor\Core\Settings\Manager as SettingsManager;
 use Elementor\Core\Settings\Page\Model;
-use Elementor\Includes\TemplateLibrary\Sources\AdminMenuItems\Add_New_Template_Menu_Item;
-use Elementor\Includes\TemplateLibrary\Sources\AdminMenuItems\Saved_Templates_Menu_Item;
-use Elementor\Includes\TemplateLibrary\Sources\AdminMenuItems\Templates_Categories_Menu_Item;
 use Elementor\Modules\Library\Documents\Library_Document;
 use Elementor\Plugin;
 use Elementor\Utils;
@@ -61,8 +57,6 @@ class Source_Local extends Source_Base {
 	const BULK_EXPORT_ACTION = 'elementor_export_multiple_templates';
 
 	const ADMIN_MENU_SLUG = 'edit.php?post_type=elementor_library';
-
-	const ADMIN_MENU_PRIORITY = 10;
 
 	const ADMIN_SCREEN_ID = 'edit-elementor_library';
 
@@ -221,28 +215,20 @@ class Source_Local extends Source_Base {
 	 * @access public
 	 */
 	public function register_data() {
-		$admin_menu_rearrangement_active = Plugin::$instance->experiments->is_feature_active( 'admin_menu_rearrangement' );
-
-		if ( $admin_menu_rearrangement_active ) {
-			$name = esc_html_x( 'Templates', 'Template Library', 'elementor' );
-		} else {
-			$name = esc_html_x( 'My Templates', 'Template Library', 'elementor' );
-		}
-
 		$labels = [
-			'name' => $name,
-			'singular_name' => esc_html_x( 'Template', 'Template Library', 'elementor' ),
-			'add_new' => esc_html_x( 'Add New', 'Template Library', 'elementor' ),
-			'add_new_item' => esc_html_x( 'Add New Template', 'Template Library', 'elementor' ),
-			'edit_item' => esc_html_x( 'Edit Template', 'Template Library', 'elementor' ),
-			'new_item' => esc_html_x( 'New Template', 'Template Library', 'elementor' ),
-			'all_items' => esc_html_x( 'All Templates', 'Template Library', 'elementor' ),
-			'view_item' => esc_html_x( 'View Template', 'Template Library', 'elementor' ),
-			'search_items' => esc_html_x( 'Search Template', 'Template Library', 'elementor' ),
-			'not_found' => esc_html_x( 'No Templates found', 'Template Library', 'elementor' ),
-			'not_found_in_trash' => esc_html_x( 'No Templates found in Trash', 'Template Library', 'elementor' ),
+			'name' => _x( 'My Templates', 'Template Library', 'elementor' ),
+			'singular_name' => _x( 'Template', 'Template Library', 'elementor' ),
+			'add_new' => _x( 'Add New', 'Template Library', 'elementor' ),
+			'add_new_item' => _x( 'Add New Template', 'Template Library', 'elementor' ),
+			'edit_item' => _x( 'Edit Template', 'Template Library', 'elementor' ),
+			'new_item' => _x( 'New Template', 'Template Library', 'elementor' ),
+			'all_items' => _x( 'All Templates', 'Template Library', 'elementor' ),
+			'view_item' => _x( 'View Template', 'Template Library', 'elementor' ),
+			'search_items' => _x( 'Search Template', 'Template Library', 'elementor' ),
+			'not_found' => _x( 'No Templates found', 'Template Library', 'elementor' ),
+			'not_found_in_trash' => _x( 'No Templates found in Trash', 'Template Library', 'elementor' ),
 			'parent_item_colon' => '',
-			'menu_name' => esc_html_x( 'Templates', 'Template Library', 'elementor' ),
+			'menu_name' => _x( 'Templates', 'Template Library', 'elementor' ),
 		];
 
 		$args = [
@@ -251,7 +237,7 @@ class Source_Local extends Source_Base {
 			'rewrite' => false,
 			'menu_icon' => 'dashicons-admin-page',
 			'show_ui' => true,
-			'show_in_menu' => ! $admin_menu_rearrangement_active,
+			'show_in_menu' => true,
 			'show_in_nav_menus' => false,
 			'exclude_from_search' => true,
 			'capability_type' => 'post',
@@ -280,7 +266,7 @@ class Source_Local extends Source_Base {
 			'query_var' => is_admin(),
 			'rewrite' => false,
 			'public' => false,
-			'label' => esc_html_x( 'Type', 'Template Library', 'elementor' ),
+			'label' => _x( 'Type', 'Template Library', 'elementor' ),
 		];
 
 		/**
@@ -321,9 +307,9 @@ class Source_Local extends Source_Base {
 			'rewrite' => false,
 			'public' => false,
 			'labels' => [
-				'name' => esc_html_x( 'Categories', 'Template Library', 'elementor' ),
-				'singular_name' => esc_html_x( 'Category', 'Template Library', 'elementor' ),
-				'all_items' => esc_html_x( 'All Categories', 'Template Library', 'elementor' ),
+				'name' => _x( 'Categories', 'Template Library', 'elementor' ),
+				'singular_name' => _x( 'Category', 'Template Library', 'elementor' ),
+				'all_items' => _x( 'All Categories', 'Template Library', 'elementor' ),
 			],
 		];
 
@@ -349,52 +335,31 @@ class Source_Local extends Source_Base {
 	 * @since 2.4.0
 	 * @access public
 	 */
-	private function admin_menu_reorder( Admin_Menu_Manager $admin_menu ) {
+	public function admin_menu_reorder() {
 		global $submenu;
 
-		if ( ! isset( $submenu[ static::ADMIN_MENU_SLUG ] ) ) {
+		if ( ! isset( $submenu[ self::ADMIN_MENU_SLUG ] ) ) {
 			return;
 		}
+		$library_submenu = &$submenu[ self::ADMIN_MENU_SLUG ];
 
-		remove_submenu_page( static::ADMIN_MENU_SLUG, static::ADMIN_MENU_SLUG );
+		// Remove 'All Templates' menu.
+		unset( $library_submenu[5] );
 
-		$add_new_slug = 'post-new.php?post_type=' . static::CPT;
-		$category_slug = 'edit-tags.php?taxonomy=' . static::TAXONOMY_CATEGORY_SLUG . '&amp;post_type=' . static::CPT;
-
-		$library_submenu = new Collection( $submenu[ static::ADMIN_MENU_SLUG ] );
-
-		$add_new_item = $library_submenu->find( function ( $item ) use ( $add_new_slug ) {
-			return $add_new_slug === $item[2];
-		} );
-
-		$categories_item = $library_submenu->find( function ( $item ) use ( $category_slug ) {
-			return $category_slug === $item[2];
-		} );
-
-		if ( $add_new_item ) {
-			remove_submenu_page( static::ADMIN_MENU_SLUG, $add_new_slug );
-
-			$admin_menu->register( admin_url( static::ADMIN_MENU_SLUG . '#add_new' ), new Add_New_Template_Menu_Item() );
+		// If current use can 'Add New' - move the menu to end, and add the '#add_new' anchor.
+		if ( isset( $library_submenu[10][2] ) ) {
+			$library_submenu[700] = $library_submenu[10];
+			unset( $library_submenu[10] );
+			$library_submenu[700][2] = admin_url( self::ADMIN_MENU_SLUG . '#add_new' );
 		}
 
-		if ( $categories_item ) {
-			remove_submenu_page( static::ADMIN_MENU_SLUG, $category_slug );
-
-			$admin_menu->register( $category_slug, new Templates_Categories_Menu_Item() );
+		// Move the 'Categories' menu to end.
+		if ( isset( $library_submenu[15] ) ) {
+			$library_submenu[800] = $library_submenu[15];
+			unset( $library_submenu[15] );
 		}
-	}
-
-	/**
-	 * Add a `current` CSS class to the `Saved Templates` submenu page when it's active.
-	 * It should work by default, but since we interfere with WordPress' builtin CPT menus it doesn't work properly.
-	 *
-	 * @return void
-	 */
-	private function admin_menu_set_current() {
-		global $submenu;
 
 		if ( $this->is_current_screen() ) {
-			$library_submenu = &$submenu[ static::ADMIN_MENU_SLUG ];
 			$library_title = $this->get_library_title();
 
 			foreach ( $library_submenu as &$item ) {
@@ -408,8 +373,8 @@ class Source_Local extends Source_Base {
 		}
 	}
 
-	private function register_admin_menu( Admin_Menu_Manager $admin_menu ) {
-		$admin_menu->register( static::get_admin_url( true ), new Saved_Templates_Menu_Item() );
+	public function admin_menu() {
+		add_submenu_page( self::ADMIN_MENU_SLUG, '', esc_html__( 'Saved Templates', 'elementor' ), Editor::EDITING_CAPABILITY, self::get_admin_url( true ) );
 	}
 
 	public function admin_title( $admin_title, $title ) {
@@ -512,6 +477,7 @@ class Source_Local extends Source_Base {
 			[
 				'post_title' => $template_data['title'],
 				'post_status' => $template_data['status'],
+				'post_type' => self::CPT,
 			]
 		);
 
@@ -850,16 +816,15 @@ class Source_Local extends Source_Base {
 			return new \WP_Error( 'file_error', 'Please upload a file to import' );
 		}
 
-		// Set the Request's state as an Elementor upload request, in order to support unfiltered file uploads.
-		Plugin::$instance->uploads_manager->set_elementor_upload_state( true );
-
 		$items = [];
 
 		// If the import file is a Zip file with potentially multiple JSON files
 		if ( 'zip' === pathinfo( $name, PATHINFO_EXTENSION ) ) {
-			$extracted_files = Plugin::$instance->uploads_manager->extract_and_validate_zip( $path, [ 'json' ] );
+			$extracted_files = Plugin::$instance->uploads_manager->extract_and_validate_zip( $path );
 
 			if ( is_wp_error( $extracted_files ) ) {
+				// Remove the temporary zip file, since it's now not necessary.
+				Plugin::$instance->uploads_manager->remove_file_or_dir( $path );
 				// Delete the temporary extraction directory, since it's now not necessary.
 				Plugin::$instance->uploads_manager->remove_file_or_dir( $extracted_files['extraction_directory'] );
 
@@ -870,8 +835,7 @@ class Source_Local extends Source_Base {
 				$import_result = $this->import_single_template( $file_path );
 
 				if ( is_wp_error( $import_result ) ) {
-					// Delete the temporary extraction directory, since it's now not necessary.
-					Plugin::$instance->uploads_manager->remove_file_or_dir( $extracted_files['extraction_directory'] );
+					Plugin::$instance->uploads_manager->remove_file_or_dir( $import_result );
 
 					return $import_result;
 				}
@@ -886,6 +850,8 @@ class Source_Local extends Source_Base {
 			$import_result = $this->import_single_template( $path );
 
 			if ( is_wp_error( $import_result ) ) {
+				Plugin::$instance->uploads_manager->remove_file_or_dir( $import_result );
+
 				return $import_result;
 			}
 
@@ -950,7 +916,7 @@ class Source_Local extends Source_Base {
 					<input type="hidden" name="_nonce" value="<?php Utils::print_unescaped_internal_string( $ajax->create_nonce() ); ?>">
 					<fieldset id="elementor-import-template-form-inputs">
 						<input type="file" name="file" accept=".json,application/json,.zip,application/octet-stream,application/zip,application/x-zip,application/x-zip-compressed" required>
-						<input id="e-import-template-action" type="submit" class="button" value="<?php echo esc_attr__( 'Import Now', 'elementor' ); ?>">
+						<input type="submit" class="button" value="<?php echo esc_attr__( 'Import Now', 'elementor' ); ?>">
 					</fieldset>
 				</form>
 			</div>
@@ -1334,12 +1300,12 @@ class Source_Local extends Source_Base {
 		?>
 			<div class="elementor-blank_state">
 				<i class="eicon-folder"></i>
-				<h3>
+				<h2>
 					<?php
 					/* translators: %s: Template type label. */
 					printf( esc_html__( 'Create Your First %s', 'elementor' ), esc_html( $current_type_label ) );
 					?>
-				</h3>
+				</h2>
 				<p><?php echo wp_kses_post( $description ); ?></p>
 				<a id="elementor-template-library-add-new" class="elementor-button elementor-button-success" href="<?php echo esc_url( $href ); ?>">
 					<?php
@@ -1388,7 +1354,7 @@ class Source_Local extends Source_Base {
 	 *                             `WP_Error`.
 	 */
 	private function import_single_template( $file_path ) {
-		$data = json_decode( Utils::file_get_contents( $file_path ), true );
+		$data = json_decode( file_get_contents( $file_path ), true );
 
 		if ( empty( $data ) ) {
 			return new \WP_Error( 'file_error', 'Invalid File' );
@@ -1459,7 +1425,7 @@ class Source_Local extends Source_Base {
 			'content' => $template_data['content'],
 			'page_settings' => $template_data['settings'],
 			'version' => DB::DB_VERSION,
-			'title' => $document->get_main_post()->post_title,
+			'title' => get_the_title( $template_id ),
 			'type' => self::get_template_type( $template_id ),
 		];
 
@@ -1570,18 +1536,8 @@ class Source_Local extends Source_Base {
 	 */
 	private function add_actions() {
 		if ( is_admin() ) {
-			add_action( 'elementor/admin/menu/register', function ( Admin_Menu_Manager $admin_menu ) {
-				$this->register_admin_menu( $admin_menu );
-			}, static::ADMIN_MENU_PRIORITY );
-
-			add_action( 'elementor/admin/menu/register', function ( Admin_Menu_Manager $admin_menu ) {
-				$this->admin_menu_reorder( $admin_menu );
-			}, 800 );
-
-			add_action( 'elementor/admin/menu/after_register', function () {
-				$this->admin_menu_set_current();
-			} );
-
+			add_action( 'admin_menu', [ $this, 'admin_menu' ] );
+			add_action( 'admin_menu', [ $this, 'admin_menu_reorder' ], 800 );
 			add_filter( 'admin_title', [ $this, 'admin_title' ], 10, 2 );
 			add_action( 'all_admin_notices', [ $this, 'replace_admin_heading' ] );
 			add_filter( 'post_row_actions', [ $this, 'post_row_actions' ], 10, 2 );

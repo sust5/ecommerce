@@ -140,8 +140,6 @@ class Frontend extends App {
 		'elementor-default',
 	];
 
-	private $google_fonts_index = 0;
-
 	/**
 	 * Front End constructor.
 	 *
@@ -161,6 +159,15 @@ class Frontend extends App {
 		add_action( 'template_redirect', [ $this, 'init' ] );
 		add_action( 'wp_enqueue_scripts', [ $this, 'register_scripts' ], 5 );
 		add_action( 'wp_enqueue_scripts', [ $this, 'register_styles' ], 5 );
+
+		// TODO: a temporary solution to a scenario that the elementor-icons.css file was de-registered and the e-icons font fonts should not be loaded.
+		add_action( 'wp_enqueue_scripts', function() {
+			if ( ! wp_style_is( 'elementor-icons', 'registered' ) ) {
+				$elementor_icons_css_reset = '[class^="eicon"], [class*=" eicon-"] { font-family: "initial"; } [class^="eicon"]:before, [class*=" eicon-"]:before { content: ""; }';
+
+				wp_add_inline_style( 'elementor-frontend', $elementor_icons_css_reset );
+			}
+		}, 30 );
 
 		$this->add_content_filter();
 
@@ -230,17 +237,8 @@ class Frontend extends App {
 
 		// Priority 7 to allow google fonts in header template to load in <head> tag
 		add_action( 'wp_head', [ $this, 'print_fonts_links' ], 7 );
-		add_action( 'wp_head', [ $this, 'print_google_fonts_preconnect_tag' ], 8 );
 		add_action( 'wp_head', [ $this, 'add_theme_color_meta_tag' ] );
 		add_action( 'wp_footer', [ $this, 'wp_footer' ] );
-	}
-
-	public function print_google_fonts_preconnect_tag() {
-		if ( 0 >= $this->google_fonts_index ) {
-			return;
-		}
-
-		echo '<link rel="preconnect" href="https://fonts.gstatic.com/" crossorigin>';
 	}
 
 	/**
@@ -264,7 +262,7 @@ class Frontend extends App {
 	 */
 	public function add_theme_color_meta_tag() {
 		$kit = Plugin::$instance->kits_manager->get_active_kit_for_frontend();
-		$mobile_theme_color = $kit->get_settings( 'mobile_browser_background' );
+		$mobile_theme_color = $kit->get_settings( 'mobile_theme_color' );
 
 		if ( ! empty( $mobile_theme_color ) ) {
 			?>
@@ -416,13 +414,26 @@ class Frontend extends App {
 			true
 		);
 
+		/**
+		 * @deprecated since 2.7.0 Use Swiper instead
+		 */
+		wp_register_script(
+			'jquery-slick',
+			$this->get_js_assets_url( 'slick', 'assets/lib/slick/' ),
+			[
+				'jquery',
+			],
+			'1.8.1',
+			true
+		);
+
 		wp_register_script(
 			'elementor-dialog',
 			$this->get_js_assets_url( 'dialog', 'assets/lib/dialog/' ),
 			[
 				'jquery-ui-position',
 			],
-			'4.9.0',
+			'4.8.1',
 			true
 		);
 
@@ -495,7 +506,7 @@ class Frontend extends App {
 			'elementor-icons',
 			$this->get_css_assets_url( 'elementor-icons', 'assets/lib/eicons/css/' ),
 			[],
-			Icons_Manager::ELEMENTOR_ICONS_VERSION
+			'5.13.0'
 		);
 
 		wp_register_style(
@@ -624,8 +635,10 @@ class Frontend extends App {
 			 */
 			do_action( 'elementor/frontend/before_enqueue_styles' );
 
+			$this->add_elementor_icons_inline_css();
+
 			// The e-icons are needed in preview mode for the editor icons (plus-icon for new section, folder-icon for the templates library etc.).
-			if ( ! Plugin::$instance->experiments->is_feature_active( 'e_font_icon_svg' ) || Plugin::$instance->preview->is_preview_mode() ) {
+			if ( ! $this->is_improved_assets_loading() || Plugin::$instance->preview->is_preview_mode() ) {
 				wp_enqueue_style( 'elementor-icons' );
 			}
 
@@ -661,89 +674,28 @@ class Frontend extends App {
 	 *
 	 * @since 3.4.5
 	 *
-	 * @access public
+	 * @access private
 	 *
 	 * @param string $frontend_file_name
 	 * @param boolean $custom_file
 	 *
 	 * @return string frontend file URL
 	 */
-	public function get_frontend_file_url( $frontend_file_name, $custom_file ) {
+	private function get_frontend_file_url( $frontend_file_name, $custom_file ) {
 		if ( $custom_file ) {
-			$frontend_file = $this->get_frontend_file( $frontend_file_name );
+			$frontend_file = new FrontendFile( 'custom-' . $frontend_file_name, Breakpoints_Manager::get_stylesheet_templates_path() . $frontend_file_name );
 
+			$time = $frontend_file->get_meta( 'time' );
+
+			if ( ! $time ) {
+				$frontend_file->update();
+			}
 			$frontend_file_url = $frontend_file->get_url();
 		} else {
 			$frontend_file_url = ELEMENTOR_ASSETS_URL . 'css/' . $frontend_file_name;
 		}
 
 		return $frontend_file_url;
-	}
-
-	/**
-	 * Get Frontend File Path
-	 *
-	 * Returns the path for the CSS file to be loaded in the front end. If requested via the second parameter, a custom
-	 * file is generated based on a passed template file name. Otherwise, the path for the default CSS file is returned.
-	 *
-	 * @since 3.5.0
-	 * @access public
-	 *
-	 * @param string $frontend_file_name
-	 * @param boolean $custom_file
-	 *
-	 * @return string frontend file path
-	 */
-	public function get_frontend_file_path( $frontend_file_name, $custom_file ) {
-		if ( $custom_file ) {
-			$frontend_file = $this->get_frontend_file( $frontend_file_name );
-
-			$frontend_file_path = $frontend_file->get_path();
-		} else {
-			$frontend_file_path = ELEMENTOR_ASSETS_PATH . 'css/' . $frontend_file_name;
-		}
-
-		return $frontend_file_path;
-	}
-
-	/**
-	 * Get Frontend File
-	 *
-	 * Returns a frontend file instance.
-	 *
-	 * @since 3.5.0
-	 * @access public
-	 *
-	 * @param string $frontend_file_name
-	 * @param string $file_prefix
-	 * @param string $template_file_path
-	 *
-	 * @return FrontendFile
-	 */
-	public function get_frontend_file( $frontend_file_name, $file_prefix = 'custom-', $template_file_path = '' ) {
-		static $cached_frontend_files = [];
-
-		$file_name = $file_prefix . $frontend_file_name;
-
-		if ( isset( $cached_frontend_files[ $file_name ] ) ) {
-			return $cached_frontend_files[ $file_name ];
-		}
-
-		if ( ! $template_file_path ) {
-			$template_file_path = Breakpoints_Manager::get_stylesheet_templates_path() . $frontend_file_name;
-		}
-
-		$frontend_file = new FrontendFile( $file_name, $template_file_path );
-
-		$time = $frontend_file->get_meta( 'time' );
-
-		if ( ! $time ) {
-			$frontend_file->update();
-		}
-
-		$cached_frontend_files[ $file_name ] = $frontend_file;
-
-		return $frontend_file;
 	}
 
 	/**
@@ -780,9 +732,16 @@ class Frontend extends App {
 	}
 
 	/**
-	 * @return array|array[]
+	 * Print fonts links.
+	 *
+	 * Enqueue all the frontend fonts by url.
+	 *
+	 * Fired by `wp_head` action.
+	 *
+	 * @since 1.9.4
+	 * @access public
 	 */
-	public function get_list_of_google_fonts_by_type(): array {
+	public function print_fonts_links() {
 		$google_fonts = [
 			'google' => [],
 			'early' => [],
@@ -820,22 +779,6 @@ class Frontend extends App {
 		}
 		$this->fonts_to_enqueue = [];
 
-		return $google_fonts;
-	}
-
-	/**
-	 * Print fonts links.
-	 *
-	 * Enqueue all the frontend fonts by url.
-	 *
-	 * Fired by `wp_head` action.
-	 *
-	 * @since 1.9.4
-	 * @access public
-	 */
-	public function print_fonts_links() {
-		$google_fonts = $this->get_list_of_google_fonts_by_type();
-
 		$this->enqueue_google_fonts( $google_fonts );
 		$this->enqueue_icon_fonts();
 	}
@@ -871,71 +814,6 @@ class Frontend extends App {
 	}
 
 	/**
-	 * @param array $fonts Stable google fonts ($google_fonts['google']).
-	 * @return string
-	 */
-	public function get_stable_google_fonts_url( array $fonts ): string {
-		foreach ( $fonts as &$font ) {
-			$font = str_replace( ' ', '+', $font ) . ':100,100italic,200,200italic,300,300italic,400,400italic,500,500italic,600,600italic,700,700italic,800,800italic,900,900italic';
-		}
-
-		// Defining a font-display type to google fonts.
-		$font_display_url_str = '&display=' . Fonts::get_font_display_setting();
-
-		$fonts_url = sprintf( 'https://fonts.googleapis.com/css?family=%1$s%2$s', implode( rawurlencode( '|' ), $fonts ), $font_display_url_str );
-
-		$subsets = [
-			'ru_RU' => 'cyrillic',
-			'bg_BG' => 'cyrillic',
-			'he_IL' => 'hebrew',
-			'el' => 'greek',
-			'vi' => 'vietnamese',
-			'uk' => 'cyrillic',
-			'cs_CZ' => 'latin-ext',
-			'ro_RO' => 'latin-ext',
-			'pl_PL' => 'latin-ext',
-			'hr_HR' => 'latin-ext',
-			'hu_HU' => 'latin-ext',
-			'sk_SK' => 'latin-ext',
-			'tr_TR' => 'latin-ext',
-			'lt_LT' => 'latin-ext',
-		];
-
-		/**
-		 * Google font subsets.
-		 *
-		 * Filters the list of Google font subsets from which locale will be enqueued in frontend.
-		 *
-		 * @since 1.0.0
-		 *
-		 * @param array $subsets A list of font subsets.
-		 */
-		$subsets = apply_filters( 'elementor/frontend/google_font_subsets', $subsets );
-
-		$locale = get_locale();
-
-		if ( isset( $subsets[ $locale ] ) ) {
-			$fonts_url .= '&subset=' . $subsets[ $locale ];
-		}
-
-		return $fonts_url;
-	}
-
-	/**
-	 * @param array $fonts Early Access google fonts ($google_fonts['early']).
-	 * @return array
-	 */
-	public function get_early_access_google_font_urls( array $fonts ): array {
-		$font_urls = [];
-
-		foreach ( $fonts as $font ) {
-			$font_urls[] = sprintf( 'https://fonts.googleapis.com/earlyaccess/%s.css', strtolower( str_replace( ' ', '', $font ) ) );
-		}
-
-		return $font_urls;
-	}
-
-	/**
 	 * Print Google fonts.
 	 *
 	 * Enqueue all the frontend Google fonts.
@@ -949,7 +827,9 @@ class Frontend extends App {
 	 *                            Default is an empty array.
 	 */
 	private function enqueue_google_fonts( $google_fonts = [] ) {
-		$print_google_fonts = Fonts::is_google_fonts_enabled();
+		static $google_fonts_index = 0;
+
+		$print_google_fonts = true;
 
 		/**
 		 * Print frontend google fonts.
@@ -968,22 +848,63 @@ class Frontend extends App {
 
 		// Print used fonts
 		if ( ! empty( $google_fonts['google'] ) ) {
-			$this->google_fonts_index++;
+			$google_fonts_index++;
 
-			$fonts_url = $this->get_stable_google_fonts_url( $google_fonts['google'] );
+			foreach ( $google_fonts['google'] as &$font ) {
+				$font = str_replace( ' ', '+', $font ) . ':100,100italic,200,200italic,300,300italic,400,400italic,500,500italic,600,600italic,700,700italic,800,800italic,900,900italic';
+			}
 
-			wp_enqueue_style( 'google-fonts-' . $this->google_fonts_index, $fonts_url ); // phpcs:ignore WordPress.WP.EnqueuedResourceParameters.MissingVersion
+			// Defining a font-display type to google fonts.
+			$font_display_url_str = '&display=' . Fonts::get_font_display_setting();
+
+			$fonts_url = sprintf( 'https://fonts.googleapis.com/css?family=%1$s%2$s', implode( rawurlencode( '|' ), $google_fonts['google'] ), $font_display_url_str );
+
+			$subsets = [
+				'ru_RU' => 'cyrillic',
+				'bg_BG' => 'cyrillic',
+				'he_IL' => 'hebrew',
+				'el' => 'greek',
+				'vi' => 'vietnamese',
+				'uk' => 'cyrillic',
+				'cs_CZ' => 'latin-ext',
+				'ro_RO' => 'latin-ext',
+				'pl_PL' => 'latin-ext',
+				'hr_HR' => 'latin-ext',
+				'hu_HU' => 'latin-ext',
+				'sk_SK' => 'latin-ext',
+				'tr_TR' => 'latin-ext',
+				'lt_LT' => 'latin-ext',
+			];
+
+			/**
+			 * Google font subsets.
+			 *
+			 * Filters the list of Google font subsets from which locale will be enqueued in frontend.
+			 *
+			 * @since 1.0.0
+			 *
+			 * @param array $subsets A list of font subsets.
+			 */
+			$subsets = apply_filters( 'elementor/frontend/google_font_subsets', $subsets );
+
+			$locale = get_locale();
+
+			if ( isset( $subsets[ $locale ] ) ) {
+				$fonts_url .= '&subset=' . $subsets[ $locale ];
+			}
+
+			wp_enqueue_style( 'google-fonts-' . $google_fonts_index, $fonts_url ); // phpcs:ignore WordPress.WP.EnqueuedResourceParameters.MissingVersion
 		}
 
 		if ( ! empty( $google_fonts['early'] ) ) {
-			$early_access_font_urls = $this->get_early_access_google_font_urls( $google_fonts['early'] );
-
-			foreach ( $early_access_font_urls as $ea_font_url ) {
-				$this->google_fonts_index++;
+			foreach ( $google_fonts['early'] as $current_font ) {
+				$google_fonts_index++;
 
 				//printf( '<link rel="stylesheet" type="text/css" href="https://fonts.googleapis.com/earlyaccess/%s.css">', strtolower( str_replace( ' ', '', $current_font ) ) );
 
-				wp_enqueue_style( 'google-earlyaccess-' . $this->google_fonts_index, $ea_font_url ); // phpcs:ignore WordPress.WP.EnqueuedResourceParameters.MissingVersion
+				$font_url = sprintf( 'https://fonts.googleapis.com/earlyaccess/%s.css', strtolower( str_replace( ' ', '', $current_font ) ) );
+
+				wp_enqueue_style( 'google-earlyaccess-' . $google_fonts_index, $font_url ); // phpcs:ignore WordPress.WP.EnqueuedResourceParameters.MissingVersion
 			}
 		}
 
@@ -1117,15 +1038,6 @@ class Frontend extends App {
 				$css_file = Post_CSS::create( $post_id );
 			}
 
-			/**
-			 * Builder Content - Before Enqueue CSS File
-			 *
-			 * Allows intervening with a document's CSS file before it is enqueued.
-			 *
-			 * @param $css_file Post_CSS|Post_Preview
-			 */
-			$css_file = apply_filters( 'elementor/frontend/builder_content/before_enqueue_css_file', $css_file );
-
 			$css_file->enqueue();
 		}
 
@@ -1135,16 +1047,6 @@ class Frontend extends App {
 		if ( is_customize_preview() || wp_doing_ajax() ) {
 			$with_css = true;
 		}
-
-		/**
-		 * Builder Content - With CSS
-		 *
-		 * Allows overriding the `$with_css` parameter which is a factor in determining whether to print the document's
-		 * CSS and font links inline in a `style` tag above the document's markup.
-		 *
-		 * @param $with_css boolean
-		 */
-		$with_css = apply_filters( 'elementor/frontend/builder_content/before_print_css', $with_css );
 
 		if ( ! empty( $css_file ) && $with_css ) {
 			$css_file->print_css();
@@ -1548,5 +1450,19 @@ class Frontend extends App {
 		$is_optimized_css_loading = Plugin::$instance->experiments->is_feature_active( 'e_optimized_css_loading' );
 
 		return ! Utils::is_script_debug() && $is_optimized_css_loading && ! Plugin::$instance->preview->is_preview_mode();
+	}
+
+	private function add_elementor_icons_inline_css() {
+		$elementor_icons_library_version = '5.10.0';
+
+		/**
+		 * The e-icons font-face must be printed inline due to custom breakpoints.
+		 * When using custom breakpoints, the frontend CSS is loaded from the custom-frontend CSS file.
+		 * The custom frontend file is located in a different path ('uploads' folder).
+		 * Therefore, it cannot be called from a CSS file that its relative path can vary.
+		 */
+		$elementor_icons_inline_css = sprintf( '@font-face{font-family:eicons;src:url(%1$slib/eicons/fonts/eicons.eot?%2$s);src:url(%1$slib/eicons/fonts/eicons.eot?%2$s#iefix) format("embedded-opentype"),url(%1$slib/eicons/fonts/eicons.woff2?%2$s) format("woff2"),url(%1$slib/eicons/fonts/eicons.woff?%2$s) format("woff"),url(%1$slib/eicons/fonts/eicons.ttf?%2$s) format("truetype"),url(%1$slib/eicons/fonts/eicons.svg?%2$s#eicon) format("svg");font-weight:400;font-style:normal}', ELEMENTOR_ASSETS_URL, $elementor_icons_library_version );
+
+		wp_add_inline_style( 'elementor-frontend', $elementor_icons_inline_css );
 	}
 }
